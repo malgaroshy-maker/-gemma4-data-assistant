@@ -116,57 +116,6 @@ def execute_python_code(code_string):
 
         # Check for plots
         if plt.get_fignums():
-            # Process Arabic text in all figure elements before saving
-            if st.session_state.get("language") == "ar" and HAS_ARABIC_SUPPORT:
-                for fig_num in plt.get_fignums():
-                    figure = plt.figure(fig_num)
-                    # Draw first so tick labels are populated
-                    figure.canvas.draw()
-
-                    for ax in figure.get_axes():
-                        # Process title
-                        if ax.get_title():
-                            ax.set_title(process_arabic_text(ax.get_title()))
-                        # Process x/y labels
-                        if ax.get_xlabel():
-                            ax.set_xlabel(process_arabic_text(ax.get_xlabel()))
-                        if ax.get_ylabel():
-                            ax.set_ylabel(process_arabic_text(ax.get_ylabel()))
-                        # Process tick labels (must draw first to get actual text)
-                        xtick_labels = ax.get_xticklabels()
-                        if xtick_labels:
-                            new_xticks = [
-                                process_arabic_text(t.get_text()) for t in xtick_labels
-                            ]
-                            ax.set_xticklabels(new_xticks)
-                        ytick_labels = ax.get_yticklabels()
-                        if ytick_labels:
-                            new_yticks = [
-                                process_arabic_text(t.get_text()) for t in ytick_labels
-                            ]
-                            ax.set_yticklabels(new_yticks)
-                        # Process legend
-                        if ax.get_legend():
-                            new_texts = [
-                                process_arabic_text(t.get_text())
-                                for t in ax.get_legend().get_texts()
-                            ]
-                            ax.legend(new_texts)
-                        # Process all text objects on the axes (annotations, etc.)
-                        for text_obj in list(ax.texts):
-                            if text_obj.get_text():
-                                text_obj.set_text(
-                                    process_arabic_text(text_obj.get_text())
-                                )
-                        # Process figure-level texts
-                        for text_obj in list(figure.texts):
-                            if text_obj.get_text():
-                                text_obj.set_text(
-                                    process_arabic_text(text_obj.get_text())
-                                )
-                        # Redraw after text changes
-                        figure.canvas.draw()
-
             buf = BytesIO()
             plt.savefig(buf, format="png", bbox_inches="tight", dpi=100)
             buf.seek(0)
@@ -282,31 +231,115 @@ def setup_arabic_matplotlib():
     except ImportError:
         return False
 
-    # Find an Arabic-capable font on the system
-    arabic_fonts = [
-        "Noto Sans Arabic",
-        "Arial",
-        "Tahoma",
-        "Segoe UI",
-        "Times New Roman",
+    # Try to register Noto Sans Arabic from known Windows paths
+    noto_arabic_paths = [
+        r"C:\Users\masal\AppData\Local\Microsoft\Windows\Fonts\NotoSansArabic-VariableFont_wdth,wght.ttf",
     ]
+    # Also search user font directories dynamically
+    import glob
+
+    user_font_dirs = [
+        os.path.expandvars(r"%USERPROFILE%\AppData\Local\Microsoft\Windows\Fonts"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Windows\Fonts"),
+    ]
+    for d in user_font_dirs:
+        if os.path.isdir(d):
+            noto_arabic_paths.extend(glob.glob(os.path.join(d, "*NotoSansArabic*.ttf")))
+            noto_arabic_paths.extend(glob.glob(os.path.join(d, "*NotoSansArabic*.otf")))
+
     font_found = False
-    for font_name in arabic_fonts:
-        try:
-            font_path = fm.findfont(fm.FontProperties(family=font_name))
-            # findfont returns DejaVu Sans fallback if not found
-            if "DejaVu" not in font_path:
-                plt.rcParams["font.family"] = font_name
-                plt.rcParams["font.sans-serif"] = [font_name] + plt.rcParams.get(
+    for font_path in noto_arabic_paths:
+        if os.path.isfile(font_path):
+            try:
+                fm.fontManager.addfont(font_path)
+                prop = fm.FontProperties(fname=font_path)
+                family_name = prop.get_name()
+                plt.rcParams["font.family"] = family_name
+                plt.rcParams["font.sans-serif"] = [family_name] + plt.rcParams.get(
                     "font.sans-serif", []
                 )
                 font_found = True
                 break
-        except Exception:
-            continue
+            except Exception:
+                continue
+
+    # Fallback to system Arabic fonts
+    if not font_found:
+        arabic_fonts = ["Arial", "Tahoma", "Segoe UI", "Times New Roman"]
+        for font_name in arabic_fonts:
+            try:
+                font_path = fm.findfont(fm.FontProperties(family=font_name))
+                if "DejaVu" not in font_path:
+                    plt.rcParams["font.family"] = font_name
+                    plt.rcParams["font.sans-serif"] = [font_name] + plt.rcParams.get(
+                        "font.sans-serif", []
+                    )
+                    font_found = True
+                    break
+            except Exception:
+                continue
 
     if not font_found:
         plt.rcParams["font.family"] = "sans-serif"
+
+    # Monkey-patch matplotlib text methods to auto-process Arabic
+    _original_set_text = matplotlib.text.Text.set_text
+    _original_set_title = matplotlib.axes.Axes.set_title
+    _original_set_xlabel = matplotlib.axes.Axes.set_xlabel
+    _original_set_ylabel = matplotlib.axes.Axes.set_ylabel
+    _original_set_xticklabels = matplotlib.axes.Axes.set_xticklabels
+    _original_set_yticklabels = matplotlib.axes.Axes.set_yticklabels
+    _original_text = matplotlib.axes.Axes.text
+    _original_annotate = matplotlib.axes.Axes.annotate
+
+    def _process_if_arabic(s):
+        if not isinstance(s, str):
+            return s
+        # Detect Arabic characters
+        if any("\u0600" <= c <= "\u06ff" or "\u0750" <= c <= "\u077f" for c in s):
+            return process_arabic_text(s)
+        return s
+
+    def _patched_set_text(self, s):
+        return _original_set_text(self, _process_if_arabic(s))
+
+    def _patched_set_title(self, label, *args, **kwargs):
+        return _original_set_title(self, _process_if_arabic(label), *args, **kwargs)
+
+    def _patched_set_xlabel(self, xlabel, *args, **kwargs):
+        return _original_set_xlabel(self, _process_if_arabic(xlabel), *args, **kwargs)
+
+    def _patched_set_ylabel(self, ylabel, *args, **kwargs):
+        return _original_set_ylabel(self, _process_if_arabic(ylabel), *args, **kwargs)
+
+    def _patched_set_xticklabels(self, labels, *args, **kwargs):
+        if isinstance(labels, list):
+            labels = [
+                _process_if_arabic(l) if isinstance(l, str) else l for l in labels
+            ]
+        return _original_set_xticklabels(self, labels, *args, **kwargs)
+
+    def _patched_set_yticklabels(self, labels, *args, **kwargs):
+        if isinstance(labels, list):
+            labels = [
+                _process_if_arabic(l) if isinstance(l, str) else l for l in labels
+            ]
+        return _original_set_yticklabels(self, labels, *args, **kwargs)
+
+    def _patched_text(self, x, y, s, *args, **kwargs):
+        return _original_text(self, x, y, _process_if_arabic(s), *args, **kwargs)
+
+    def _patched_annotate(self, text, *args, **kwargs):
+        return _original_annotate(self, _process_if_arabic(text), *args, **kwargs)
+
+    matplotlib.text.Text.set_text = _patched_set_text
+    matplotlib.axes.Axes.set_title = _patched_set_title
+    matplotlib.axes.Axes.set_xlabel = _patched_set_xlabel
+    matplotlib.axes.Axes.set_ylabel = _patched_set_ylabel
+    matplotlib.axes.Axes.set_xticklabels = _patched_set_xticklabels
+    matplotlib.axes.Axes.set_yticklabels = _patched_set_yticklabels
+    matplotlib.axes.Axes.text = _patched_text
+    matplotlib.axes.Axes.annotate = _patched_annotate
 
     return HAS_ARABIC_SUPPORT
 

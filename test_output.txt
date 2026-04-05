@@ -1,0 +1,4 @@
+Original: المبيعات حسب القسم
+Processed: ﻢﺴﻘﻟﺍ ﺐﺴﺣ ﺕﺎﻌﻴﺒﻤﻟﺍ
+Len orig: 18
+Len proc: 18
