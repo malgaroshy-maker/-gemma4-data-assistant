@@ -120,6 +120,9 @@ def execute_python_code(code_string):
             if st.session_state.get("language") == "ar" and HAS_ARABIC_SUPPORT:
                 for fig_num in plt.get_fignums():
                     figure = plt.figure(fig_num)
+                    # Draw first so tick labels are populated
+                    figure.canvas.draw()
+
                     for ax in figure.get_axes():
                         # Process title
                         if ax.get_title():
@@ -129,7 +132,7 @@ def execute_python_code(code_string):
                             ax.set_xlabel(process_arabic_text(ax.get_xlabel()))
                         if ax.get_ylabel():
                             ax.set_ylabel(process_arabic_text(ax.get_ylabel()))
-                        # Process tick labels
+                        # Process tick labels (must draw first to get actual text)
                         xtick_labels = ax.get_xticklabels()
                         if xtick_labels:
                             new_xticks = [
@@ -149,18 +152,20 @@ def execute_python_code(code_string):
                                 for t in ax.get_legend().get_texts()
                             ]
                             ax.legend(new_texts)
-                        # Process all text objects on the axes
-                        for text_obj in ax.texts:
+                        # Process all text objects on the axes (annotations, etc.)
+                        for text_obj in list(ax.texts):
                             if text_obj.get_text():
                                 text_obj.set_text(
                                     process_arabic_text(text_obj.get_text())
                                 )
                         # Process figure-level texts
-                        for text_obj in figure.texts:
+                        for text_obj in list(figure.texts):
                             if text_obj.get_text():
                                 text_obj.set_text(
                                     process_arabic_text(text_obj.get_text())
                                 )
+                        # Redraw after text changes
+                        figure.canvas.draw()
 
             buf = BytesIO()
             plt.savefig(buf, format="png", bbox_inches="tight", dpi=100)
@@ -265,17 +270,19 @@ client = OpenAI(base_url=DEFAULT_SERVER_URL, api_key="sk-no-key-required")
 lang = st.session_state.language
 is_rtl = lang == "ar"
 
+
 # Configure matplotlib for Arabic text
-if is_rtl:
+def setup_arabic_matplotlib():
+    """Configure matplotlib to render Arabic text correctly."""
     try:
         import arabic_reshaper
         from bidi.algorithm import get_display
 
         HAS_ARABIC_SUPPORT = True
     except ImportError:
-        HAS_ARABIC_SUPPORT = False
+        return False
 
-    # Find an Arabic-capable font
+    # Find an Arabic-capable font on the system
     arabic_fonts = [
         "Noto Sans Arabic",
         "Arial",
@@ -285,31 +292,40 @@ if is_rtl:
     ]
     font_found = False
     for font_name in arabic_fonts:
-        font_files = fm.findfont(fm.FontProperties(family=font_name))
-        if font_files and font_files != fm.findfont(
-            fm.FontProperties(family="DejaVu Sans")
-        ):
-            plt.rcParams["font.family"] = font_name
-            font_found = True
-            break
+        try:
+            font_path = fm.findfont(fm.FontProperties(family=font_name))
+            # findfont returns DejaVu Sans fallback if not found
+            if "DejaVu" not in font_path:
+                plt.rcParams["font.family"] = font_name
+                plt.rcParams["font.sans-serif"] = [font_name] + plt.rcParams.get(
+                    "font.sans-serif", []
+                )
+                font_found = True
+                break
+        except Exception:
+            continue
+
     if not font_found:
         plt.rcParams["font.family"] = "sans-serif"
-else:
-    HAS_ARABIC_SUPPORT = False
+
+    return HAS_ARABIC_SUPPORT
 
 
 def process_arabic_text(text):
     """Reshape and reorder Arabic text for proper rendering in matplotlib."""
-    if not HAS_ARABIC_SUPPORT or not text:
+    if not text:
         return text
     try:
         import arabic_reshaper
         from bidi.algorithm import get_display
 
-        reshaped = arabic_reshaper.reshape(text)
+        reshaped = arabic_reshaper.reshape(str(text))
         return get_display(reshaped)
     except Exception:
-        return text
+        return str(text)
+
+
+HAS_ARABIC_SUPPORT = setup_arabic_matplotlib() if is_rtl else False
 
 
 # ---------------------------------------------------------
