@@ -17,7 +17,7 @@ streamlit run app.py
 ## Architecture
 - **Single file app**: `app.py` is the entire application (~600 lines)
 - **Server**: `llama-server` runs externally on `http://localhost:8080/v1` — the app connects via `openai` Python SDK
-- **Model**: Gemma 4 E4B GGUF from HuggingFace cache at `C:\Users\masal\.cache\huggingface\hub\models--unsloth--gemma-4-e4b-it-gguf\`
+- **Model**: Gemma 4 E4B GGUF from HuggingFace cache (`%USERPROFILE%\.cache\huggingface\hub\models--unsloth--gemma-4-e4b-it-gguf\`)
 - **Multimodal projector**: `mmproj-BF16.gguf` in same cache dir — required for audio/image inputs
 
 ## Key Dependencies
