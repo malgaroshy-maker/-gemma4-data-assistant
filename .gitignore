@@ -2,6 +2,8 @@
 .venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 *.egg-info/
 dist/
 build/
@@ -20,6 +22,7 @@ build/
 # Temp files
 *.wav
 *.log
+*.tmp
 Thumbs.db
 .DS_Store
 
@@ -30,4 +33,8 @@ gemma_transformed.xlsx
 
 # Secrets
 .env
+.env.local
 *.pem
+
+# Streamlit
+.streamlit/cache/

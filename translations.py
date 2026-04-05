@@ -66,6 +66,12 @@ TRANSLATIONS = {
         "engineer_title": "Electrical Engineer & AI Enthusiast",
         # Language
         "language_label": "🌐 Language",
+        # Dynamic strings
+        "context_meter": "Context: {est} / 128k tokens",
+        "load_demo": "Load {name}",
+        "image_prefix": "Image",
+        "analyze_media": "Analyze media.",
+        "executed_successfully": "Executed successfully.",
     },
     "ar": {
         # Sidebar
@@ -132,6 +138,12 @@ TRANSLATIONS = {
         "engineer_title": "مهندس كهرباء ومتحمس للذكاء الاصطناعي",
         # Language
         "language_label": "🌐 اللغة",
+        # Dynamic strings
+        "context_meter": "السياق: {est} / 128 ألف رمز",
+        "load_demo": "تحميل {name}",
+        "image_prefix": "صورة",
+        "analyze_media": "تحليل الوسائط.",
+        "executed_successfully": "تم التنفيذ بنجاح.",
     },
 }
 

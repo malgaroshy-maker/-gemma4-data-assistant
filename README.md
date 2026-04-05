@@ -35,6 +35,11 @@
   - [llama-server Setup](#llama-server-setup)
   - [Multimodal Configuration](#multimodal-configuration)
   - [Streamlit Settings](#streamlit-settings)
+  - [Environment Variables](#environment-variables)
+- [Internationalization (i18n)](#-internationalization-i18n)
+  - [Arabic Support](#arabic-support)
+  - [RTL Layout](#rtl-layout)
+  - [Adding New Languages](#adding-new-languages)
 - [Project Structure](#-project-structure)
 - [Contributing](#-contributing)
 - [License](#-license)
@@ -77,6 +82,13 @@ The application leverages:
 - **Context Optimization**: Fast Context mode (100 rows + full statistics) for 70% latency reduction
 - **Export Capabilities**: Download transformed data as Excel files
 - **Demo Datasets**: 5 pre-loaded datasets for immediate testing
+
+### 🌐 Bilingual Support (English / العربية)
+- **Full Arabic UI**: Every label, button, and message translated
+- **RTL Layout**: Complete right-to-left layout mirroring for Arabic
+- **Arabic Charts**: Matplotlib charts with properly rendered Arabic text (reshaping + bidi)
+- **Dynamic Language Switching**: Switch between English and Arabic instantly without restart
+- **Arabic Font Support**: Auto-detects Noto Sans Arabic or falls back to system fonts (Arial, Tahoma, Segoe UI)
 
 ### 🎨 Professional UI
 - **Dark Mode**: Google DeepMind-inspired design system
@@ -316,12 +328,63 @@ gatherUsageStats = false
 
 ---
 
+## 🌐 Internationalization (i18n)
+
+### Arabic Support
+
+The app supports **full bilingual mode** (English / العربية) with a language selector in the sidebar.
+
+**What's translated:**
+- All UI labels, buttons, and headers
+- Chat input placeholder and status messages
+- Error and success notifications
+- Pro tips and demo descriptions
+- Chart labels and titles (via `arabic-reshaper` + `python-bidi`)
+
+**How it works:**
+1. **Translation Dictionary**: `translations.py` contains all UI strings in both languages
+2. **RTL CSS**: When Arabic is selected, comprehensive CSS injects `direction: rtl` across all elements
+3. **Arabic Charts**: Matplotlib text is automatically reshaped and reordered (right-to-left) before rendering
+4. **Font Detection**: Auto-detects Noto Sans Arabic from Windows font directories, falls back to Arial/Tahoma/Segoe UI
+5. **Lazy Initialization**: Arabic font/reshaper setup runs only when Arabic is first selected (performance optimization)
+
+### RTL Layout
+
+The RTL implementation includes:
+- Sidebar mirrored to the right side
+- Chat messages right-aligned
+- Tables and metrics right-aligned
+- Feature tips with right border accent
+- Code blocks remain LTR (for Python readability)
+
+### Adding New Languages
+
+To add a new language:
+
+1. Add translations to `translations.py`:
+```python
+"fr": {
+    "config_header": "⚙️ Configuration",
+    # ... all other keys
+},
+```
+
+2. Update the language selector in `app.py`:
+```python
+lang_options = {"en": "🇬🇧 English", "ar": "🇸🇦 العربية", "fr": "🇫🇷 Français"}
+```
+
+3. Add RTL CSS if needed (for RTL languages like Hebrew, Urdu, etc.)
+
+---
+
 ## 📁 Project Structure
 
 ```
 gemma-data-assistant/
-├── app.py                          # Main Streamlit application (~640 lines)
-├── start_llama_server.bat          # Pre-configured server launcher
+├── app.py                          # Main Streamlit application (~990 lines)
+├── translations.py                 # Bilingual translation dictionary (EN/AR)
+├── start_llama_server.bat          # Auto-detecting server launcher
 ├── run_app.bat                     # Windows app launcher (auto-creates venv)
 ├── run_app.ps1                     # PowerShell app launcher
 ├── requirements.txt                # Python dependencies
@@ -334,7 +397,7 @@ gemma-data-assistant/
 │   │   └── MASTER.md
 │   └── gemma-data-assistant-v2/
 │       └── MASTER.md
-└── .streamlit/                     # Streamlit configuration (optional)
+└── .streamlit/                     # Streamlit configuration
     └── config.toml
 ```
 
@@ -343,10 +406,11 @@ gemma-data-assistant/
 | File | Purpose |
 |------|---------|
 | `app.py` | Single-file Streamlit app with all logic |
-| `start_llama_server.bat` | Launches `llama-server` with correct model paths |
+| `translations.py` | Translation dictionary (EN/AR) with `t()` helper |
+| `start_llama_server.bat` | Auto-detects model from HuggingFace cache |
 | `run_app.bat` | Creates venv, installs deps, runs app |
 | `AGENTS.md` | Technical documentation for AI agents |
-| `requirements.txt` | All Python dependencies |
+| `requirements.txt` | All Python dependencies including `arabic-reshaper` + `python-bidi` |
 
 ---
 

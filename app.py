@@ -82,7 +82,8 @@ def execute_python_code(code_string):
     captured_df = None
     try:
         exec_globals = {"df": st.session_state.df, "pd": pd, "plt": plt, "sns": sns}
-        if st.session_state.get("language") == "ar" and HAS_ARABIC_SUPPORT:
+        ar_ok = st.session_state.get("language") == "ar" and _ensure_arabic_matplotlib()
+        if ar_ok:
             import arabic_reshaper
             from bidi.algorithm import get_display
 
@@ -119,7 +120,10 @@ def execute_python_code(code_string):
 
         # Check for plots
         if plt.get_fignums():
-            if st.session_state.get("language") == "ar" and HAS_ARABIC_SUPPORT:
+            ar_ok = (
+                st.session_state.get("language") == "ar" and _ensure_arabic_matplotlib()
+            )
+            if ar_ok:
                 for fig_num in plt.get_fignums():
                     figure = plt.figure(fig_num)
                     # Draw first to populate all text elements
@@ -220,6 +224,8 @@ if "last_image_hash" not in st.session_state:
     st.session_state.last_image_hash = None
 if "language" not in st.session_state:
     st.session_state.language = "en"
+if "arabic_initialized" not in st.session_state:
+    st.session_state.arabic_initialized = False
 
 # Initialize OpenAI client once (avoids recreation on every rerun)
 DEFAULT_SERVER_URL = os.environ.get("SERVER_URL", "http://localhost:8080/v1")
@@ -233,35 +239,38 @@ lang = st.session_state.language
 is_rtl = lang == "ar"
 
 
-# Configure matplotlib for Arabic text
-def setup_arabic_matplotlib():
-    """Configure matplotlib to render Arabic text correctly."""
+def _ensure_arabic_matplotlib():
+    """Lazy-init Arabic matplotlib support on first Arabic request."""
+    if st.session_state.arabic_initialized:
+        return True
+    if not is_rtl:
+        return False
+
     try:
         import arabic_reshaper
         from bidi.algorithm import get_display
 
-        HAS_ARABIC_SUPPORT = True
+        has_support = True
     except ImportError:
+        st.session_state.arabic_initialized = True
         return False
 
-    # Try to register Noto Sans Arabic from known Windows paths
-    noto_arabic_paths = [
-        r"C:\Users\masal\AppData\Local\Microsoft\Windows\Fonts\NotoSansArabic-VariableFont_wdth,wght.ttf",
-    ]
-    # Also search user font directories dynamically
+    # Search for Noto Sans Arabic dynamically (no hardcoded paths)
     import glob
 
+    noto_paths = []
     user_font_dirs = [
         os.path.expandvars(r"%USERPROFILE%\AppData\Local\Microsoft\Windows\Fonts"),
         os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Windows\Fonts"),
+        os.path.expandvars(r"%WINDIR%\Fonts"),
     ]
     for d in user_font_dirs:
         if os.path.isdir(d):
-            noto_arabic_paths.extend(glob.glob(os.path.join(d, "*NotoSansArabic*.ttf")))
-            noto_arabic_paths.extend(glob.glob(os.path.join(d, "*NotoSansArabic*.otf")))
+            noto_paths.extend(glob.glob(os.path.join(d, "*NotoSansArabic*.ttf")))
+            noto_paths.extend(glob.glob(os.path.join(d, "*NotoSansArabic*.otf")))
 
     font_found = False
-    for font_path in noto_arabic_paths:
+    for font_path in noto_paths:
         if os.path.isfile(font_path):
             try:
                 fm.fontManager.addfont(font_path)
@@ -276,7 +285,6 @@ def setup_arabic_matplotlib():
             except Exception:
                 continue
 
-    # Fallback to system Arabic fonts
     if not font_found:
         arabic_fonts = ["Arial", "Tahoma", "Segoe UI", "Times New Roman"]
         for font_name in arabic_fonts:
@@ -295,7 +303,8 @@ def setup_arabic_matplotlib():
     if not font_found:
         plt.rcParams["font.family"] = "sans-serif"
 
-    return HAS_ARABIC_SUPPORT
+    st.session_state.arabic_initialized = True
+    return has_support
 
 
 def _reshape_arabic(text):
@@ -318,20 +327,16 @@ def _reshape_arabic(text):
 
 def _process_figure_text(figure):
     """Process ALL text elements in a matplotlib figure for Arabic."""
-    # Process all axes
     for ax in figure.get_axes():
-        # Title
         title = ax.get_title()
         if title:
             ax.set_title(_reshape_arabic(title))
-        # Labels
         xlabel = ax.get_xlabel()
         if xlabel:
             ax.set_xlabel(_reshape_arabic(xlabel))
         ylabel = ax.get_ylabel()
         if ylabel:
             ax.set_ylabel(_reshape_arabic(ylabel))
-        # Tick labels - process the actual text objects
         for tick in ax.get_xticklabels():
             txt = tick.get_text()
             if txt:
@@ -340,37 +345,29 @@ def _process_figure_text(figure):
             txt = tick.get_text()
             if txt:
                 tick.set_text(_reshape_arabic(txt))
-        # Legend
         if ax.get_legend():
             for t in ax.get_legend().get_texts():
                 txt = t.get_text()
                 if txt:
                     t.set_text(_reshape_arabic(txt))
-        # Text objects (annotations, ax.text, etc.)
         for t in list(ax.texts):
             txt = t.get_text()
             if txt:
                 t.set_text(_reshape_arabic(txt))
-        # Children that are Text instances
         for child in list(ax.get_children()):
             if hasattr(child, "get_text") and hasattr(child, "set_text"):
                 txt = child.get_text()
                 if txt and any("\u0600" <= c <= "\u06ff" for c in txt):
                     child.set_text(_reshape_arabic(txt))
-    # Figure-level texts
     for t in list(figure.texts):
         txt = t.get_text()
         if txt:
             t.set_text(_reshape_arabic(txt))
-    # Figure suptitle
     suptitle = figure._suptitle
     if suptitle:
         txt = suptitle.get_text()
         if txt:
             suptitle.set_text(_reshape_arabic(txt))
-
-
-HAS_ARABIC_SUPPORT = setup_arabic_matplotlib() if is_rtl else False
 
 
 # ---------------------------------------------------------
@@ -512,7 +509,8 @@ with st.sidebar:
     st.caption(t("context_window_caption", lang=lang))
     est_tokens = len(st.session_state.data_context) // 4
     st.progress(
-        min(est_tokens / 128000, 1.0), text=f"Context: {est_tokens:,} / 128k tokens"
+        min(est_tokens / 128000, 1.0),
+        text=t("context_meter", lang=lang, est=f"{est_tokens:,}"),
     )
 
     with st.expander(t("server_settings", lang=lang)):
@@ -680,7 +678,9 @@ if st.session_state.df is None:
     )
     demo_cols = st.columns(len(DEMO_DATASETS))
     for i, (name, data) in enumerate(DEMO_DATASETS.items()):
-        if demo_cols[i].button(f"Load {name}", use_container_width=True):
+        if demo_cols[i].button(
+            t("load_demo", lang=lang, name=name), use_container_width=True
+        ):
             st.session_state.df = pd.read_csv(io.StringIO(data))
             st.session_state.current_sheet = name
             st.session_state.data_context = (
@@ -744,7 +744,9 @@ else:
                             st.code(res["code"], language="python")
                     if res.get("plot"):
                         st.image(base64.b64decode(res["plot"]))
-                    if res.get("output") and res["output"] != "Executed successfully.":
+                    if res.get("output") and res["output"] != t(
+                        "executed_successfully", lang=lang
+                    ):
                         st.info(res["output"])
                     if res.get("df_preview") is not None:
                         st.markdown(f"### {t('result_table', lang=lang)}")
@@ -820,8 +822,9 @@ else:
 
         # Image MUST come before text per Gemma 4 multimodal spec
         if uploaded_image and image_is_new:
-            display_prompt = f"🖼️ [Image: {uploaded_image.name}]" + (
-                f"\n{display_prompt}" if display_prompt else ""
+            display_prompt = (
+                f"🖼️ [{t('image_prefix', lang=lang)}: {uploaded_image.name}]"
+                + (f"\n{display_prompt}" if display_prompt else "")
             )
             # Reset position before reading
             uploaded_image.seek(0)
@@ -837,7 +840,7 @@ else:
             user_content.append({"type": "text", "text": active_prompt})
 
         if not active_prompt:
-            user_content.append({"type": "text", "text": "Analyze media."})
+            user_content.append({"type": "text", "text": t("analyze_media", lang=lang)})
 
         st.session_state.messages.append(
             {"role": "user", "content": display_prompt, "api_content": user_content}

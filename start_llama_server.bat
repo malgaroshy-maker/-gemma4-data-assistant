@@ -38,7 +38,20 @@ pause
 exit /b 1
 
 :found_snapshot
+:: Try multiple model filename patterns (UD and non-UD variants)
 set MODEL_PATH=%HF_CACHE%\%SNAPSHOT%\gemma-4-E4B-it-UD-Q4_K_XL.gguf
+if not exist %MODEL_PATH% set MODEL_PATH=%HF_CACHE%\%SNAPSHOT%\gemma-4-E4B-it-Q4_K_XL.gguf
+if not exist %MODEL_PATH% (
+    :: Try to find any matching GGUF file
+    for %%F in ("%HF_CACHE%\%SNAPSHOT%\gemma-4-E4B-it-*.gguf") do (
+        set MODEL_PATH=%%F
+        goto found_model
+    )
+    echo ERROR: No Gemma 4 model GGUF found in snapshot directory.
+    pause
+    exit /b 1
+)
+:found_model
 set MMPROJ_PATH=%HF_CACHE%\%SNAPSHOT%\mmproj-BF16.gguf
 
 :check_mmproj
