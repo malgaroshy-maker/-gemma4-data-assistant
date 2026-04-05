@@ -3,12 +3,15 @@ import pandas as pd
 from openai import OpenAI
 import base64
 import os
+import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import seaborn as sns
 import json
 import io
 import hashlib
 import re
+from translations import t
 
 # ---------------------------------------------------------
 # CONSTANTS & ASSETS
@@ -79,6 +82,13 @@ def execute_python_code(code_string):
     captured_df = None
     try:
         exec_globals = {"df": st.session_state.df, "pd": pd, "plt": plt, "sns": sns}
+        if st.session_state.get("language") == "ar" and HAS_ARABIC_SUPPORT:
+            import arabic_reshaper
+            from bidi.algorithm import get_display
+
+            exec_globals["arabic_text"] = lambda text: get_display(
+                arabic_reshaper.reshape(text)
+            )
         from io import StringIO, BytesIO
         import sys
 
@@ -106,8 +116,54 @@ def execute_python_code(code_string):
 
         # Check for plots
         if plt.get_fignums():
+            # Process Arabic text in all figure elements before saving
+            if st.session_state.get("language") == "ar" and HAS_ARABIC_SUPPORT:
+                for fig_num in plt.get_fignums():
+                    figure = plt.figure(fig_num)
+                    for ax in figure.get_axes():
+                        # Process title
+                        if ax.get_title():
+                            ax.set_title(process_arabic_text(ax.get_title()))
+                        # Process x/y labels
+                        if ax.get_xlabel():
+                            ax.set_xlabel(process_arabic_text(ax.get_xlabel()))
+                        if ax.get_ylabel():
+                            ax.set_ylabel(process_arabic_text(ax.get_ylabel()))
+                        # Process tick labels
+                        xtick_labels = ax.get_xticklabels()
+                        if xtick_labels:
+                            new_xticks = [
+                                process_arabic_text(t.get_text()) for t in xtick_labels
+                            ]
+                            ax.set_xticklabels(new_xticks)
+                        ytick_labels = ax.get_yticklabels()
+                        if ytick_labels:
+                            new_yticks = [
+                                process_arabic_text(t.get_text()) for t in ytick_labels
+                            ]
+                            ax.set_yticklabels(new_yticks)
+                        # Process legend
+                        if ax.get_legend():
+                            new_texts = [
+                                process_arabic_text(t.get_text())
+                                for t in ax.get_legend().get_texts()
+                            ]
+                            ax.legend(new_texts)
+                        # Process all text objects on the axes
+                        for text_obj in ax.texts:
+                            if text_obj.get_text():
+                                text_obj.set_text(
+                                    process_arabic_text(text_obj.get_text())
+                                )
+                        # Process figure-level texts
+                        for text_obj in figure.texts:
+                            if text_obj.get_text():
+                                text_obj.set_text(
+                                    process_arabic_text(text_obj.get_text())
+                                )
+
             buf = BytesIO()
-            plt.savefig(buf, format="png", bbox_inches="tight")
+            plt.savefig(buf, format="png", bbox_inches="tight", dpi=100)
             buf.seek(0)
             plot_b64 = base64.b64encode(buf.read()).decode("utf-8")
             plt.clf()
@@ -195,11 +251,66 @@ if "last_audio_hash" not in st.session_state:
     st.session_state.last_audio_hash = None
 if "last_image_hash" not in st.session_state:
     st.session_state.last_image_hash = None
+if "language" not in st.session_state:
+    st.session_state.language = "en"
 
 # Initialize OpenAI client once (avoids recreation on every rerun)
 DEFAULT_SERVER_URL = os.environ.get("SERVER_URL", "http://localhost:8080/v1")
 DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME", "unsloth/gemma-4-e4b-it-gguf:Q4_K_XL")
 client = OpenAI(base_url=DEFAULT_SERVER_URL, api_key="sk-no-key-required")
+
+# ---------------------------------------------------------
+# LANGUAGE & RTL
+# ---------------------------------------------------------
+lang = st.session_state.language
+is_rtl = lang == "ar"
+
+# Configure matplotlib for Arabic text
+if is_rtl:
+    try:
+        import arabic_reshaper
+        from bidi.algorithm import get_display
+
+        HAS_ARABIC_SUPPORT = True
+    except ImportError:
+        HAS_ARABIC_SUPPORT = False
+
+    # Find an Arabic-capable font
+    arabic_fonts = [
+        "Noto Sans Arabic",
+        "Arial",
+        "Tahoma",
+        "Segoe UI",
+        "Times New Roman",
+    ]
+    font_found = False
+    for font_name in arabic_fonts:
+        font_files = fm.findfont(fm.FontProperties(family=font_name))
+        if font_files and font_files != fm.findfont(
+            fm.FontProperties(family="DejaVu Sans")
+        ):
+            plt.rcParams["font.family"] = font_name
+            font_found = True
+            break
+    if not font_found:
+        plt.rcParams["font.family"] = "sans-serif"
+else:
+    HAS_ARABIC_SUPPORT = False
+
+
+def process_arabic_text(text):
+    """Reshape and reorder Arabic text for proper rendering in matplotlib."""
+    if not HAS_ARABIC_SUPPORT or not text:
+        return text
+    try:
+        import arabic_reshaper
+        from bidi.algorithm import get_display
+
+        reshaped = arabic_reshaper.reshape(text)
+        return get_display(reshaped)
+    except Exception:
+        return text
+
 
 # ---------------------------------------------------------
 # THEMED COLORS DEFINITION (FORCED DARK MODE)
@@ -215,10 +326,87 @@ c = {
     "sub_text": "#94A3B8",
 }
 
+rtl_css = (
+    """
+    /* RTL: Root direction */
+    .stApp { direction: rtl !important; }
+
+    /* RTL: Sidebar */
+    [data-testid="stSidebar"] { direction: rtl !important; text-align: right !important; border-right: none !important; border-left: 1px solid #334155 !important; }
+    [data-testid="stSidebar"] .stMarkdown p { text-align: right !important; }
+    [data-testid="stSidebar"] label { text-align: right !important; }
+
+    /* RTL: Chat messages */
+    .stChatMessage { direction: rtl !important; text-align: right !important; }
+    [data-testid="stChatMessageContent"] { direction: rtl !important; text-align: right !important; }
+    [data-testid="stChatMessageContent"] p { direction: rtl !important; text-align: right !important; }
+
+    /* RTL: Headers */
+    .main-header, .sub-header { direction: rtl !important; text-align: right !important; }
+
+    /* RTL: Step cards */
+    .step-card { direction: rtl !important; text-align: right !important; }
+    .step-card h3 { text-align: right !important; }
+
+    /* RTL: Feature tips */
+    .feature-tip { direction: rtl !important; text-align: right !important; border-left: none !important; border-right: 4px solid #60A5FA !important; }
+    .feature-tip b { text-align: right !important; }
+
+    /* RTL: Tables */
+    .stMarkdown table { direction: rtl !important; text-align: right !important; }
+    .stMarkdown table th, .stMarkdown table td { text-align: right !important; }
+
+    /* RTL: Form elements */
+    [data-baseweb="select"] { direction: rtl !important; }
+    .stTextInput > div { direction: rtl !important; }
+    .stTextArea > div { direction: rtl !important; }
+    [role="textbox"] { direction: rtl !important; text-align: right !important; }
+
+    /* RTL: Metrics */
+    [data-testid="stMetric"] { direction: rtl !important; text-align: right !important; }
+    [data-testid="stMetricValue"] { text-align: right !important; }
+    [data-testid="stMetricLabel"] { text-align: right !important; }
+
+    /* RTL: Expanders */
+    .streamlit-expanderHeader { direction: rtl !important; text-align: right !important; }
+
+    /* RTL: Columns and flex containers */
+    [data-testid="column"] > div { direction: rtl !important; text-align: right !important; }
+    div[data-testid="stHorizontalBlock"] > div { direction: rtl !important; }
+
+    /* RTL: Download button */
+    .stDownloadButton { direction: rtl !important; }
+
+    /* RTL: Info/warning/error alerts */
+    [data-testid="stAlertContainer"] { direction: rtl !important; text-align: right !important; }
+
+    /* RTL: Code blocks */
+    .stCode { direction: ltr !important; text-align: left !important; }
+    .stCode pre { direction: ltr !important; text-align: left !important; }
+"""
+    if is_rtl
+    else ""
+)
+
+font_family = (
+    "'Noto Sans Arabic', 'Segoe UI', system-ui, -apple-system, sans-serif"
+    if is_rtl
+    else "'Segoe UI', system-ui, -apple-system, sans-serif"
+)
+
+font_import = (
+    """
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@300;400;500;600;700&display=swap');
+"""
+    if is_rtl
+    else ""
+)
+
 st.markdown(
     f"""
 <style>
-    .stApp {{ background-color: {c["bg"]}; color: {c["text"]} !important; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }}
+    {font_import}
+    .stApp {{ background-color: {c["bg"]}; color: {c["text"]} !important; font-family: {font_family}; }}
     .stApp p, .stApp span, .stApp label, .stApp li, .stApp h1, .stApp h2, .stApp h3, .stApp h4 {{ color: {c["text"]} !important; }}
     [data-testid="stSidebar"] {{ background-color: {c["sidebar_bg"]}; border-right: 1px solid {c["border"]}; }}
     [data-testid="stSidebar"] .stMarkdown p, [data-testid="stSidebar"] label {{ color: {c["text"]} !important; }}
@@ -237,6 +425,7 @@ st.markdown(
     .stMarkdown table {{ color: {c["text"]} !important; background-color: {c["card_bg"]}; }}
     .feature-tip {{ background: {c["bg"]}; padding: 1rem; border-radius: 12px; border-left: 4px solid {c["primary"]}; margin: 10px 0; }}
     .feature-tip b {{ color: {c["primary"]} !important; }}
+    {rtl_css}
 </style>
 """,
     unsafe_allow_html=True,
@@ -244,49 +433,81 @@ st.markdown(
 
 # Sidebar
 with st.sidebar:
-    st.header("⚙️ Configuration")
+    # Language selector at the top
+    lang_options = {"en": "🇬🇧 English", "ar": "🇸🇦 العربية"}
+    selected_lang = st.selectbox(
+        t("language_label", lang=lang),
+        options=list(lang_options.keys()),
+        format_func=lambda x: lang_options[x],
+        index=list(lang_options.keys()).index(lang),
+        key="lang_selector",
+    )
+    if selected_lang != lang:
+        st.session_state.language = selected_lang
+        st.rerun()
 
-    st.caption("Gemma 4 | 128K Context Window")
+    st.header(t("config_header", lang=lang))
+
+    st.caption(t("context_window_caption", lang=lang))
     est_tokens = len(st.session_state.data_context) // 4
     st.progress(
         min(est_tokens / 128000, 1.0), text=f"Context: {est_tokens:,} / 128k tokens"
     )
 
-    with st.expander("Server Settings"):
-        server_url = st.text_input("Server URL", value=DEFAULT_SERVER_URL)
-        model_name = st.text_input("Model Name", value=DEFAULT_MODEL_NAME)
-        st.info(
-            "💡 **Multimodal Note:** To use Voice/Vision, you MUST start your server with the `--mmproj` flag pointing to the Gemma 4 multimodal projector file."
+    with st.expander(t("server_settings", lang=lang)):
+        server_url = st.text_input(
+            t("server_url_label", lang=lang), value=DEFAULT_SERVER_URL
         )
-        if st.button("🔌 Check Connection", use_container_width=True):
+        model_name = st.text_input(
+            t("model_name_label", lang=lang), value=DEFAULT_MODEL_NAME
+        )
+        st.markdown(t("multimodal_note", lang=lang))
+        if st.button(t("check_connection", lang=lang), use_container_width=True):
             try:
                 temp_client = OpenAI(base_url=server_url, api_key="sk-no-key-required")
                 models = temp_client.models.list()
-                st.success(f"Connected! {len(models.data)} models found.")
+                st.success(t("connected", lang=lang, count=len(models.data)))
             except Exception as e:
                 st.error(str(e))
 
     st.divider()
-    st.header("🧠 Reasoning Depth")
-    reasoning_effort = st.select_slider(
-        "Depth", options=["Quick", "Standard", "Deep Analysis"], value="Standard"
+    st.header(t("reasoning_header", lang=lang))
+    reasoning_options = {
+        "en": {
+            "Quick": "Quick",
+            "Standard": "Standard",
+            "Deep Analysis": "Deep Analysis",
+        },
+        "ar": {"Quick": "سريع", "Standard": "قياسي", "Deep Analysis": "تحليل عميق"},
+    }
+    reasoning_map = reasoning_options[lang]
+    reasoning_display = st.select_slider(
+        t("reasoning_depth", lang=lang),
+        options=list(reasoning_map.keys()),
+        format_func=lambda x: reasoning_map[x],
+        value="Standard",
     )
+    reasoning_effort = reasoning_display  # Keep English keys for code logic
 
     st.divider()
-    st.header("📂 Upload Data")
-    uploaded_file = st.file_uploader("Upload CSV/Excel", type=["csv", "xlsx"])
+    st.header(t("upload_header", lang=lang))
+    uploaded_file = st.file_uploader(
+        t("file_uploader_label", lang=lang), type=["csv", "xlsx"]
+    )
 
     # Fast Context Toggle
     use_fast_context = st.sidebar.checkbox(
-        "⚡ Fast Context (Recommended)",
+        t("fast_context", lang=lang),
         value=True,
-        help="Only sends the first 100 rows to speed up model processing.",
+        help=t("fast_context_help", lang=lang),
     )
 
     if uploaded_file:
         if uploaded_file.name.endswith(".xlsx"):
             xls = pd.ExcelFile(uploaded_file)
-            selected_sheet = st.selectbox("Sheet:", options=xls.sheet_names)
+            selected_sheet = st.selectbox(
+                t("sheet_label", lang=lang), options=xls.sheet_names
+            )
         else:
             selected_sheet = "CSV_Data"
 
@@ -295,7 +516,7 @@ with st.sidebar:
             or st.session_state.current_sheet != selected_sheet
         ):
             try:
-                with st.spinner("Loading..."):
+                with st.spinner(t("loading", lang=lang)):
                     df = (
                         pd.read_csv(uploaded_file)
                         if uploaded_file.name.endswith(".csv")
@@ -336,16 +557,18 @@ with st.sidebar:
                             index=False
                         )
                     )
-                st.success("Data Loaded!")
+                st.success(t("data_loaded", lang=lang))
             except Exception as e:
                 st.error(str(e))
 
     if st.session_state.df is not None:
         st.divider()
-        if st.button("🗑️ Clear Chat", use_container_width=True):
+        if st.button(t("clear_chat", lang=lang), use_container_width=True):
             st.session_state.messages = []
             st.rerun()
-        if st.button("❌ Reset All", type="primary", use_container_width=True):
+        if st.button(
+            t("reset_all", lang=lang), type="primary", use_container_width=True
+        ):
             st.session_state.df = None
             st.session_state.data_context = ""
             st.rerun()
@@ -353,9 +576,9 @@ with st.sidebar:
     st.divider()
     st.markdown(
         f"""<div style='text-align: center; padding: 10px; border-top: 1px solid {c["border"]};'>
-        <p style='font-size: 0.8rem; color: {c["sub_text"]};'>Developed by</p>
+        <p style='font-size: 0.8rem; color: {c["sub_text"]};'>{t("developed_by", lang=lang)}</p>
         <p style='font-weight: bold; color: {c["primary"]}; margin-top: -10px;'>Mahamed Algaroshy</p>
-        <p style='font-size: 0.75rem; color: {c["sub_text"]}; line-height: 1.2;'>Electrical Engineer & AI Enthusiast</p>
+        <p style='font-size: 0.75rem; color: {c["sub_text"]}; line-height: 1.2;'>{t("engineer_title", lang=lang)}</p>
     </div>""",
         unsafe_allow_html=True,
     )
@@ -365,30 +588,35 @@ with st.sidebar:
 # ---------------------------------------------------------
 if st.session_state.df is None:
     st.markdown('<div class="hero-container">', unsafe_allow_html=True)
-    st.markdown(f'<h1 class="main-header">Gemma Frontier</h1>', unsafe_allow_html=True)
     st.markdown(
-        '<p class="sub-header">The Future of Private, Local Data Intelligence.</p>',
+        f'<h1 class="main-header">{t("main_header", lang=lang)}</h1>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<p class="sub-header">{t("sub_header", lang=lang)}</p>',
         unsafe_allow_html=True,
     )
 
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown(
-            f'<div class="step-card"><h3>{get_icon_svg("settings", 24, c["primary"])} 1. Connect</h3><p>Ensure llama-server is active on port 8080.</p></div>',
+            f'<div class="step-card"><h3>{get_icon_svg("settings", 24, c["primary"])} {t("step1_title", lang=lang)}</h3><p>{t("step1_desc", lang=lang)}</p></div>',
             unsafe_allow_html=True,
         )
     with col2:
         st.markdown(
-            f'<div class="step-card"><h3>{get_icon_svg("upload", 24, c["primary"])} 2. Ingest</h3><p>Upload files or choose a demo dataset below.</p></div>',
+            f'<div class="step-card"><h3>{get_icon_svg("upload", 24, c["primary"])} {t("step2_title", lang=lang)}</h3><p>{t("step2_desc", lang=lang)}</p></div>',
             unsafe_allow_html=True,
         )
     with col3:
         st.markdown(
-            f'<div class="step-card"><h3>{get_icon_svg("sparkles", 24, c["primary"])} 3. Unleash</h3><p>Chat, visualize, and analyze with multi-modal AI.</p></div>',
+            f'<div class="step-card"><h3>{get_icon_svg("sparkles", 24, c["primary"])} {t("step3_title", lang=lang)}</h3><p>{t("step3_desc", lang=lang)}</p></div>',
             unsafe_allow_html=True,
         )
 
-    st.markdown("<br><h3>🚀 Quick-Start Demos</h3>", unsafe_allow_html=True)
+    st.markdown(
+        f"<br><h3>{t('quick_start_demos', lang=lang)}</h3>", unsafe_allow_html=True
+    )
     demo_cols = st.columns(len(DEMO_DATASETS))
     for i, (name, data) in enumerate(DEMO_DATASETS.items()):
         if demo_cols[i].button(f"Load {name}", use_container_width=True):
@@ -399,15 +627,15 @@ if st.session_state.df is None:
             )
             st.rerun()
 
-    st.markdown("<br><h3>💡 Pro Tips for Showcase</h3>", unsafe_allow_html=True)
+    st.markdown(f"<br><h3>{t('pro_tips', lang=lang)}</h3>", unsafe_allow_html=True)
     st.markdown(
         f"""
-    <div class="feature-tip"><b>🗣️ Voice Analysis:</b> Click the mic and say "Which department has the highest performance?"</div>
-    <div class="feature-tip"><b>🎨 Agentic Visuals:</b> Ask "Draw a correlation heatmap of numeric columns" and watch code execute.</div>
-    <div class="feature-tip"><b>👁️ Vision context:</b> Upload a screenshot of an external chart and ask "Compare this image with my data".</div>
-    <div class="feature-tip"><b>🧮 Precise Math:</b> Ask for complex budget impacts; Gemma uses pre-calculated Pandas stats for 100% accuracy.</div>
-    <div class="feature-tip"><b>📊 Sentiment Analysis:</b> (Load Feedback) Ask "What is the general sentiment of these comments?"</div>
-    <div class="feature-tip"><b>📉 Predictive Insights:</b> Ask "Based on current task speeds, when will the project be finished?"</div>
+    <div class="feature-tip">{t("pro_tip_voice", lang=lang)}</div>
+    <div class="feature-tip">{t("pro_tip_visuals", lang=lang)}</div>
+    <div class="feature-tip">{t("pro_tip_vision", lang=lang)}</div>
+    <div class="feature-tip">{t("pro_tip_math", lang=lang)}</div>
+    <div class="feature-tip">{t("pro_tip_sentiment", lang=lang)}</div>
+    <div class="feature-tip">{t("pro_tip_predictive", lang=lang)}</div>
     """,
         unsafe_allow_html=True,
     )
@@ -415,22 +643,23 @@ if st.session_state.df is None:
 
 else:
     st.markdown(
-        f'<h1 class="main-header">📊 Data Workspace</h1>', unsafe_allow_html=True
+        f'<h1 class="main-header">{t("workspace_header", lang=lang)}</h1>',
+        unsafe_allow_html=True,
     )
     st.markdown(
-        f'<p class="sub-header">Working on <b>{st.session_state.current_sheet}</b></p>',
+        f'<p class="sub-header">{t("working_on", lang=lang)} <b>{st.session_state.current_sheet}</b></p>',
         unsafe_allow_html=True,
     )
 
-    with st.expander(f"🔍 Preview Data & Export"):
+    with st.expander(f"{t('preview_export', lang=lang)}"):
         c1, c2, c3 = st.columns([1, 1, 1])
-        c1.metric("Rows", len(st.session_state.df))
-        c2.metric("Cols", len(st.session_state.df.columns))
+        c1.metric(t("rows", lang=lang), len(st.session_state.df))
+        c2.metric(t("cols", lang=lang), len(st.session_state.df.columns))
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             st.session_state.df.to_excel(writer, index=False)
         c3.download_button(
-            label="💾 Export Excel",
+            label=t("export_excel", lang=lang),
             data=buffer.getvalue(),
             file_name=f"gemma_transformed.xlsx",
             use_container_width=True,
@@ -441,7 +670,7 @@ else:
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             if "thought" in message and message["thought"]:
-                with st.expander("🤔 View AI Reasoning"):
+                with st.expander(t("view_reasoning", lang=lang)):
                     st.markdown(message["thought"])
 
             st.markdown(message["content"])
@@ -450,25 +679,25 @@ else:
             if "tool_results" in message:
                 for res in message["tool_results"]:
                     if res.get("code"):
-                        with st.expander("📝 View Generated Code", expanded=False):
+                        with st.expander(t("view_code", lang=lang), expanded=False):
                             st.code(res["code"], language="python")
                     if res.get("plot"):
                         st.image(base64.b64decode(res["plot"]))
                     if res.get("output") and res["output"] != "Executed successfully.":
                         st.info(res["output"])
                     if res.get("df_preview") is not None:
-                        st.markdown("### 📋 Result Table")
+                        st.markdown(f"### {t('result_table', lang=lang)}")
                         st.dataframe(
                             pd.read_json(res["df_preview"]), use_container_width=True
                         )
 
     input_col, mic_col = st.columns([0.9, 0.1])
     with input_col:
-        prompt = st.chat_input("Ask about your data...")
+        prompt = st.chat_input(t("chat_input", lang=lang))
     with mic_col:
         audio_bytes = st.audio_input("🎙️", label_visibility="collapsed")
     uploaded_image = st.file_uploader(
-        "🖼️ Add context image", type=["png", "jpg", "jpeg"]
+        t("image_uploader", lang=lang), type=["png", "jpg", "jpeg"]
     )
 
     # Check if this is a new image using hash
@@ -504,13 +733,13 @@ else:
                 with sr.AudioFile(tmp_path) as source:
                     audio_data = recognizer.record(source)
                 transcribed_text = recognizer.recognize_google(audio_data)
-                st.success(f'🎤 Transcribed: "{transcribed_text}"')
+                st.success(t("transcribed", lang=lang, text=transcribed_text))
             except sr.UnknownValueError:
-                st.warning("🎤 Could not understand audio. Please try again.")
+                st.warning(t("could_not_understand", lang=lang))
             except sr.RequestError as e:
-                st.error(f"🎤 Speech service error: {e}")
+                st.error(t("speech_error", lang=lang, error=e))
             except Exception as e:
-                st.error(f"🎤 Error: {str(e)}")
+                st.error(t("audio_error", lang=lang, error=str(e)))
             finally:
                 import os
 
@@ -562,10 +791,16 @@ else:
                 unsafe_allow_html=True,
             )
 
+            # Language-aware system prompt
+            lang_instruction = (
+                "\nYou MUST respond in Arabic (العربية). Use Arabic for all explanations, labels, and responses."
+                if lang == "ar"
+                else ""
+            )
             api_messages = [
                 {
                     "role": "system",
-                    "content": f"<|think|>\nYou are an expert data analyst. Use tool calls for charts. Data Context:\n{st.session_state.data_context}",
+                    "content": f"<|think|>\nYou are an expert data analyst. Use tool calls for charts. Data Context:\n{st.session_state.data_context}{lang_instruction}",
                 }
             ]
             for m in st.session_state.messages:
@@ -613,7 +848,7 @@ else:
                     if hasattr(delta, "reasoning_content") and delta.reasoning_content:
                         if not thought_expander:
                             thought_expander = thought_container.expander(
-                                "🤔 View AI Reasoning", expanded=True
+                                t("view_reasoning", lang=lang), expanded=True
                             )
                             thought_placeholder = thought_expander.empty()
                         thought_content += delta.reasoning_content
@@ -628,7 +863,7 @@ else:
                         if is_thinking:
                             if not thought_expander:
                                 thought_expander = thought_container.expander(
-                                    "🤔 View AI Reasoning", expanded=True
+                                    t("view_reasoning", lang=lang), expanded=True
                                 )
                                 thought_placeholder = thought_expander.empty()
                             thought_content += delta.content
@@ -642,7 +877,7 @@ else:
                 turn_tool_results = []
                 if tool_calls:
                     for tc in tool_calls.values():
-                        st.info("⚙️ Calling Tool...")
+                        st.info(t("calling_tool", lang=lang))
                         raw_args = tc["function"]["arguments"]
                         # Extract valid JSON object from potentially malformed output
                         match = re.search(r"\{.*\}", raw_args, re.DOTALL)
@@ -671,7 +906,7 @@ else:
                             tool_res_entry["df_preview"] = (
                                 st.session_state.last_tool_df.head(20).to_json()
                             )
-                            st.markdown("### 📋 Result Preview")
+                            st.markdown(f"### {t('result_preview', lang=lang)}")
                             st.dataframe(st.session_state.last_tool_df.head(10))
 
                         turn_tool_results.append(tool_res_entry)
@@ -688,11 +923,7 @@ else:
             except Exception as e:
                 error_str = str(e)
                 if "audio input is not supported" in error_str or "mmproj" in error_str:
-                    st.error(
-                        "🚨 **Multimodal Error**: The server rejected your audio/image input."
-                    )
-                    st.warning(
-                        "To fix this, you must restart your `llama-server` with the `--mmproj` flag. Example:\n`llama-server -m model.gguf --mmproj projector.gguf`"
-                    )
+                    st.error(t("multimodal_error", lang=lang))
+                    st.warning(t("multimodal_fix", lang=lang))
                 else:
-                    st.error(f"Server Error: {error_str}")
+                    st.error(t("server_error", lang=lang, error=error_str))
