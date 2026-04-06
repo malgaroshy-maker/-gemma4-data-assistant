@@ -864,7 +864,7 @@ else:
             api_messages = [
                 {
                     "role": "system",
-                    "content": f"<|think|>\nYou are an expert data analyst. Use tool calls for charts. Data Context:\n{st.session_state.data_context}{lang_instruction}",
+                    "content": f"<|think|>\nYou are an expert data analyst. IMPORTANT: Only use tool calls (execute_python_code) when the user EXPLICITLY asks for charts, visualizations, tables, or code execution. For simple questions, answer directly with text — do NOT generate code, tables, or charts unless specifically requested. Data Context:\n{st.session_state.data_context}{lang_instruction}",
                 }
             ]
             for m in st.session_state.messages:
