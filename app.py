@@ -222,6 +222,10 @@ if "last_audio_hash" not in st.session_state:
     st.session_state.last_audio_hash = None
 if "last_image_hash" not in st.session_state:
     st.session_state.last_image_hash = None
+if "pending_image_b64" not in st.session_state:
+    st.session_state.pending_image_b64 = None
+if "pending_image_name" not in st.session_state:
+    st.session_state.pending_image_name = None
 if "language" not in st.session_state:
     st.session_state.language = "en"
 if "arabic_initialized" not in st.session_state:
@@ -754,20 +758,83 @@ else:
                             pd.read_json(res["df_preview"]), use_container_width=True
                         )
 
-    input_col, mic_col = st.columns([0.9, 0.1])
-    with input_col:
+    # Chat input row with integrated mic
+    st.markdown(
+        f"""
+        <style>
+        .voice-row {{
+            display: flex;
+            align-items: flex-end;
+            gap: 6px;
+            margin-bottom: 8px;
+        }}
+        .voice-row .chat-col {{
+            flex: 1;
+        }}
+        .voice-row .mic-col {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+        }}
+        div[data-testid="stAudioInput"] {{
+            margin: 0 !important;
+            padding: 0 !important;
+        }}
+        div[data-testid="stAudioInput"] > div {{
+            background: transparent !important;
+            border: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+        }}
+        div[data-testid="stAudioInput"] button {{
+            background: linear-gradient(135deg, #60A5FA, #3B82F6) !important;
+            border: none !important;
+            border-radius: 50% !important;
+            width: 42px !important;
+            height: 42px !important;
+            min-width: 42px !important;
+            padding: 0 !important;
+            font-size: 1.2rem !important;
+            box-shadow: 0 2px 8px rgba(96, 165, 250, 0.3) !important;
+            transition: all 0.2s ease !important;
+            cursor: pointer !important;
+        }}
+        div[data-testid="stAudioInput"] button:hover {{
+            box-shadow: 0 4px 16px rgba(96, 165, 250, 0.5) !important;
+            transform: scale(1.08) !important;
+        }}
+        div[data-testid="stAudioInput"] button:active {{
+            transform: scale(0.92) !important;
+        }}
+        .mic-label {{
+            font-size: 0.65rem;
+            color: #64748B;
+            cursor: help;
+            text-align: center;
+            white-space: nowrap;
+        }}
+        </style>
+        <div class="voice-row">
+            <div class="chat-col"></div>
+            <div class="mic-col">
+                <span class="mic-label" title="{t("voice_requires_internet_help", lang=lang)}">🎙️ Voice</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    chat_col, mic_col = st.columns([0.92, 0.08])
+    with chat_col:
         prompt = st.chat_input(t("chat_input", lang=lang))
     with mic_col:
-        audio_bytes = st.audio_input("🎙️", label_visibility="collapsed")
-    st.caption(
-        "⚠️ " + t("voice_requires_internet", lang=lang),
-        help=t("voice_requires_internet_help", lang=lang),
-    )
+        audio_bytes = st.audio_input("", label_visibility="collapsed")
     uploaded_image = st.file_uploader(
         t("image_uploader", lang=lang), type=["png", "jpg", "jpeg"]
     )
 
-    # Check if this is a new image using hash
+    # Check if this is a new image using hash — persist in session state
     image_is_new = False
     if uploaded_image:
         image_content = uploaded_image.getvalue()
@@ -775,11 +842,16 @@ else:
         if image_hash != st.session_state.get("last_image_hash"):
             image_is_new = True
             st.session_state.last_image_hash = image_hash
-            # Reset file uploader position so we can read it again later
             uploaded_image.seek(0)
+            st.session_state.pending_image_b64 = base64.b64encode(image_content).decode(
+                "utf-8"
+            )
+            st.session_state.pending_image_name = uploaded_image.name
 
     # Handle Audio: Transcribe locally using SpeechRecognition
+    # Store transcribed text in session state — only send when user submits
     transcribed_text = None
+    audio_ready_to_send = False
     if audio_bytes:
         import speech_recognition as sr
         import tempfile
@@ -789,8 +861,8 @@ else:
 
         if audio_hash != st.session_state.get("last_audio_hash"):
             st.session_state.last_audio_hash = audio_hash
+            st.session_state.pending_audio_text = None
 
-            # Save audio to temp WAV file
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 tmp.write(audio_content)
                 tmp_path = tmp.name
@@ -799,52 +871,64 @@ else:
                 recognizer = sr.Recognizer()
                 with sr.AudioFile(tmp_path) as source:
                     audio_data = recognizer.record(source)
-                transcribed_text = recognizer.recognize_google(audio_data)
-                st.success(t("transcribed", lang=lang, text=transcribed_text))
+                transcribed = recognizer.recognize_google(audio_data)
+                st.session_state.pending_audio_text = transcribed
+                st.success(t("transcribed", lang=lang, text=transcribed))
             except sr.UnknownValueError:
                 st.warning(t("could_not_understand", lang=lang))
+                st.session_state.pending_audio_text = None
             except sr.RequestError as e:
                 st.error(t("speech_error", lang=lang, error=e))
+                st.session_state.pending_audio_text = None
             except Exception as e:
                 st.error(t("audio_error", lang=lang, error=str(e)))
+                st.session_state.pending_audio_text = None
             finally:
                 import os
 
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
+        elif st.session_state.get("pending_audio_text"):
+            transcribed_text = st.session_state.pending_audio_text
 
-    if prompt or transcribed_text or (uploaded_image and image_is_new):
+    # Show transcribed text with Send button if available
+    if st.session_state.get("pending_audio_text") and not prompt:
+        col_preview, col_send = st.columns([0.85, 0.15])
+        with col_preview:
+            st.info(f'🎤 "{st.session_state.pending_audio_text}"')
+        with col_send:
+            if st.button("▶️ " + t("send", lang=lang), key="send_audio_btn"):
+                audio_ready_to_send = True
+                st.session_state.pending_audio_text = None
+
+    # Only trigger AI on explicit user action
+    if prompt or audio_ready_to_send:
         st.session_state.last_tool_df = None
         user_content = []
-        # Use transcribed text if available, otherwise use typed prompt
-        active_prompt = (
-            transcribed_text if transcribed_text else (prompt if prompt else "")
-        )
+        active_prompt = prompt if prompt else (transcribed_text or "")
         display_prompt = active_prompt
-        if transcribed_text:
+        if transcribed_text and not prompt:
             display_prompt = f"🎤 {transcribed_text}"
 
         # Image MUST come before text per Gemma 4 multimodal spec
-        if uploaded_image and image_is_new:
-            display_prompt = (
-                f"🖼️ [{t('image_prefix', lang=lang)}: {uploaded_image.name}]"
-                + (f"\n{display_prompt}" if display_prompt else "")
+        pending_b64 = st.session_state.get("pending_image_b64")
+        pending_name = st.session_state.get("pending_image_name")
+        if pending_b64:
+            display_prompt = f"🖼️ [{t('image_prefix', lang=lang)}: {pending_name}]" + (
+                f"\n{display_prompt}" if display_prompt else ""
             )
-            # Reset position before reading
-            uploaded_image.seek(0)
-            b64_img = base64.b64encode(uploaded_image.read()).decode("utf-8")
             user_content.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{b64_img}"},
+                    "image_url": {"url": f"data:image/png;base64,{pending_b64}"},
                 }
             )
+            # Clear pending image after attaching
+            st.session_state.pending_image_b64 = None
+            st.session_state.pending_image_name = None
 
         if active_prompt:
             user_content.append({"type": "text", "text": active_prompt})
-
-        if not active_prompt:
-            user_content.append({"type": "text", "text": t("analyze_media", lang=lang)})
 
         st.session_state.messages.append(
             {"role": "user", "content": display_prompt, "api_content": user_content}
