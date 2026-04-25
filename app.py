@@ -838,7 +838,7 @@ else:
                     if res.get("df_preview") is not None:
                         st.markdown(f"### {t('result_table', lang=lang)}")
                         st.dataframe(
-                            pd.read_json(StringIO(res["df_preview"])), use_container_width=True
+                            pd.read_json(io.StringIO(res["df_preview"])), use_container_width=True
                         )
                     if res.get("excel"):
                         st.download_button(
